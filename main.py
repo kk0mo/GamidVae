@@ -4,10 +4,9 @@ import gymnasium as gym
 from gymnasium.envs.registration import register
 import argparse
 import os
+import datetime
 
 import utils
-#import TD3
-#import dyna_gamid
 import dyna_gamid_vae
 import gamid_vae2
 import gymnasium_robotics
@@ -29,15 +28,20 @@ def eval_policy(time_step, policy, env_name, seed, actor_array, eval_episodes=10
 			episode_reward += reward
 		rewards.append(episode_reward)
 	avg_reward = np.mean(rewards)
-	print("---------------------------------------")
-	if isinstance(policy, dyna_gamid_vae.DynamicGamidVae) or isinstance(policy, gamid_vae2.GamidVae2):
-		cur_actor = len(policy.actors)
-		actor_array.append(cur_actor)
-		print(f"Evaluation over {eval_episodes} episodes and {time_step} steps: {avg_reward:.3f} Current actor: {cur_actor}")
-		# np.save(f"{actors_num_dir}/{file_name}", actor_array)
-	else:
-		print(f"Evaluation over {eval_episodes} episodes and {time_step} steps: {avg_reward:.3f}")
-	print("---------------------------------------")
+	if (time_step+1) % 5000 == 0:
+		timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+		print("---------------------------------------")
+		if isinstance(policy, dyna_gamid_vae.DynamicGamidVae) or isinstance(policy, gamid_vae2.GamidVae2):
+			cur_actor = len(policy.actors)
+			actor_array.append(cur_actor)
+			output = f"[{timestamp}] Evaluation over {eval_episodes} episodes and {time_step} steps: {avg_reward:.3f} Current actor: {cur_actor}" 
+			#np.save(f"{actors_num_dir}/{file_name}", actor_array)
+		else:
+			output = f"[{timestamp}] Evaluation over {eval_episodes} episodes and {time_step} steps: {avg_reward:.3f}" 
+		with open(f"{logs_dir}/{file_name}", "a") as log_file:
+			log_file.write(output+'\n')
+		print(output)
+		print("---------------------------------------")
 	return avg_reward
 
 if __name__ == "__main__":
@@ -55,8 +59,8 @@ if __name__ == "__main__":
 	parser.add_argument("--policy_noise", default=0.2)              # Noise added to target policy during critic update
 	parser.add_argument("--noise_clip", default=0.5)                # Range to clip target policy noise
 	parser.add_argument("--policy_freq", default=2, type=int)       # Frequency of delayed policy updates
-	parser.add_argument("--save_model", default="False", type=bool)        # Save model and optimizer parameters
-	parser.add_argument("--load_model", default="")                 # Model load file name, "" doesn't load, "default" uses file_name
+	parser.add_argument("--save_model", default="True", type=bool)        # Save model and optimizer parameters
+	parser.add_argument("--load_model", default="")               # Model load file name, "" doesn't load, "default" uses file_name
 	parser.add_argument("--file_append", default="")                 # Model load file name, "" doesn't load, "default" uses file_name
 	args = parser.parse_args()
 
@@ -67,13 +71,17 @@ if __name__ == "__main__":
 
 	results_dir = f"./results/{args.policy}"
 	actors_num_dir = f"./actor_num_results/{args.policy}"
+	
+	logs_dir = f"./Logs/{args.policy}"
+	models_dir = f"./models/{args.policy}"
+	if not os.path.exists(logs_dir):
+		os.makedirs(logs_dir)
 	if not os.path.exists(results_dir):
 		os.makedirs(results_dir)
 	if not os.path.exists(actors_num_dir):
 		os.makedirs(actors_num_dir)
-
-	if args.save_model and not os.path.exists("./models"):
-		os.makedirs("./models")
+	if args.save_model and not os.path.exists(models_dir):
+		os.makedirs(models_dir)
 
 	'''
 	env = gym.make(args.env)
@@ -105,18 +113,7 @@ if __name__ == "__main__":
 	}
 
 	# Initialize policy
-	if args.policy == "TD3":
-		# Target policy smoothing is scaled wrt the action scale
-		kwargs["policy_noise"] = args.policy_noise * max_action
-		kwargs["noise_clip"] = args.noise_clip * max_action
-		kwargs["policy_freq"] = args.policy_freq
-		#policy = TD3.TD3(**kwargs)
-	elif args.policy == "DynaGamid":
-		kwargs["policy_noise"] = args.policy_noise * max_action
-		kwargs["noise_clip"] = args.noise_clip * max_action
-		kwargs["policy_freq"] = args.policy_freq
-		#policy = dyna_gamid.DynamicGamid(**kwargs)
-	elif args.policy == 'DynaGamidVae':
+	if args.policy == 'DynaGamidVae':
 		kwargs["policy_noise"] = args.policy_noise * max_action
 		kwargs["noise_clip"] = args.noise_clip * max_action
 		kwargs["policy_freq"] = args.policy_freq
@@ -147,6 +144,7 @@ if __name__ == "__main__":
 	episode_reward = 0
 	episode_timesteps = 0
 	episode_num = 0
+	best_eval_reward = 0
 	for t in range(int(args.max_timesteps)):
 		episode_timesteps += 1
 
@@ -186,8 +184,10 @@ if __name__ == "__main__":
 
 		# Evaluate episode
 		if (t + 1) % args.eval_freq == 0:
-			evaluations.append(eval_policy(t, policy, args.env, args.seed, actor_array))
+			eval_reward = eval_policy(t, policy, args.env, args.seed, actor_array)
+			evaluations.append(eval_reward)
 			np.save(f"{results_dir}/{file_name}", evaluations)
-			if args.save_model: policy.save(f"./models/{file_name}")
-
-			
+			if args.save_model and eval_reward > best_eval_reward:
+				best_eval_reward = eval_reward
+				print(f'Saving models to {models_dir}/{file_name}, reward: {best_eval_reward}') 
+				policy.save(f"{models_dir}/{file_name}")

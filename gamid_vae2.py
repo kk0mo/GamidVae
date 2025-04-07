@@ -19,13 +19,13 @@ class Actor(nn.Module):
     def __init__(self, state_dim, action_dim, max_action):
         super(Actor, self).__init__()
         self.l1 = nn.Linear(state_dim, 256)
-        self.l2 = nn.Linear(256, 256)
+        #self.l2 = nn.Linear(256, 256)
         self.l3 = nn.Linear(256, action_dim)
         self.max_action = max_action
         
     def forward(self, state):
         a = F.relu(self.l1(state))
-        a = F.relu(self.l2(a))
+        #a = F.relu(self.l2(a))
         return self.max_action * torch.tanh(self.l3(a))
     
     def get_param_dim(self):
@@ -82,15 +82,15 @@ class GamidVae2(object):
         noise_clip=0.5,
         policy_freq=2
     ):
-        self.initial_actor_num = 2
+        self.initial_actor_num = 3
         self.actors = nn.ModuleList([
             Actor(state_dim, action_dim, max_action) for _ in range(self.initial_actor_num)
         ]).to(device)
         param_dim = self.actors[0].get_param_dim()
-        self.latent_dim = 64
+        self.latent_dim = 256
         self.actor_vae = ActorVAE(param_dim=param_dim, latent_dim=self.latent_dim)
         self.vae_buffer = ActorArchiveBuffer(capacity=1000)
-        lr = torch.tensor(3e-4, device=device)
+        lr = torch.tensor(1e-3, device=device)
         self.vae_optimizer = torch.optim.Adam(self.actor_vae.parameters(), lr=lr)
         self.actor_optimizers = [torch.optim.Adam(actor.parameters(), lr=lr) for actor in self.actors]
         self.critic = Critic(state_dim, action_dim).to(device)
@@ -120,7 +120,8 @@ class GamidVae2(object):
     @torch.no_grad()
     def calculate_actor_distance(self, next_state):
         #if self.total_it > 5e3 and self.total_it % 1000 == 0:
-        if self.total_it % 5000 == 0:
+        if self.total_it % 15000 == 0:
+            '''
             next_actions = torch.stack([actor(next_state) for actor in self.actors]).permute(1, 0, 2)
             noise = (torch.randn_like(next_actions) * self.policy_noise).clamp(-self.noise_clip, self.noise_clip)
             next_actions = (next_actions + noise).clamp(-self.max_action, self.max_action)
@@ -128,14 +129,20 @@ class GamidVae2(object):
                 torch.min(*self.critic_target(next_state, next_actions[:,i,:])) 
                 for i in range(next_actions.shape[1]) ], dim=1)
             mean_q_values = q_values.mean(dim=0)
-            min_q = torch.min(mean_q_values)
-            max_q = torch.max(mean_q_values)
-            if min_q < 0.8 * max_q:
-                actor_to_elimi = torch.argmin(mean_q_values).item()
-                z = torch.randn(1, self.latent_dim).to(device)
-                flat_theta = self.actor_vae.decoder(z).squeeze(0)
-                self.actors[actor_to_elimi].load_from_flat(flat_theta)
-                print('We have actors from new sampling space')
+            #min_q = torch.min(mean_q_values)
+            #max_q = torch.max(mean_q_values)
+            actor_to_elimi = torch.argmin(mean_q_values).item()
+            z = torch.randn(1, self.latent_dim).to(device)
+            flat_theta = self.actor_vae.decoder(z).squeeze(0)
+            self.actors[actor_to_elimi].load_from_flat(flat_theta)
+            print('We have actors from new sampling space')
+            '''
+            actor_to_elimi = 0
+            z = torch.randn(1, self.latent_dim).to(device)
+            flat_theta = self.actor_vae.decoder(z).squeeze(0)
+            self.actors[actor_to_elimi].load_from_flat(flat_theta)
+            print('We have actors from new sampling space')
+
             
         chosen_actor = random.choice(self.actors)
         return chosen_actor(next_state)
@@ -193,13 +200,13 @@ class GamidVae2(object):
         self.vae_optimizer.step()
 
     def save(self, filename):
-        #torch.save(self.critic.state_dict(), filename + "_critic")
-        #torch.save(self.critic_optimizer.state_dict(), filename + "_critic_optimizer")
+        torch.save(self.critic.state_dict(), filename + "_critic")
+        torch.save(self.critic_optimizer.state_dict(), filename + "_critic_optimizer")
         torch.save(self.actor_vae.state_dict(), filename + "_vae")
         
         for i, actor in enumerate(self.actors):
             torch.save(actor.state_dict(), filename + f"_actor_{i}")
-            #torch.save(self.actor_optimizers[i].state_dict(), filename + f"_actor_optimizer_{i}")
+            torch.save(self.actor_optimizers[i].state_dict(), filename + f"_actor_optimizer_{i}")
 
     def load(self, filename):
         self.critic.load_state_dict(torch.load(filename + "_critic"))
